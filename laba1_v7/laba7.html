@@ -1,0 +1,347 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <title>Вариант 7: CMYK ↔ RGB ↔ HSV</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 30px auto;
+            padding: 20px;
+            background: #f5f5f5;
+        }
+        h1 { text-align: center; color: #333; }
+        .model {
+            background: white;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+            padding: 15px;
+            margin: 15px 0;
+        }
+        .model h2 { margin-top: 0; color: #555; border-bottom: 2px solid #eee; padding-bottom: 5px; }
+        .row {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin: 8px 0;
+        }
+        .row label { width: 30px; font-weight: bold; }
+        input[type="range"] { flex: 1; }
+        input[type="number"] { width: 60px; }
+        input[type="color"] { width: 50px; height: 30px; border: none; cursor: pointer; }
+        #preview {
+            width: 150px;
+            height: 150px;
+            border: 3px solid #333;
+            border-radius: 10px;
+            margin: 20px auto;
+            background: rgb(255, 0, 0);
+        }
+        .value { font-weight: bold; color: #0066cc; min-width: 40px; }
+        .warning {
+            background: #fff3cd;
+            border: 1px solid #ffc107;
+            color: #856404;
+            padding: 10px;
+            border-radius: 5px;
+            margin: 10px 0;
+            display: none;
+        }
+        .warning.show { display: block; }
+    </style>
+</head>
+<body>
+    <h1>CMYK ↔ RGB ↔ HSV — Вариант 7</h1>
+    
+    <div id="preview"></div>
+    <div id="warning" class="warning"> Значение выходит за границы модели — выполнено обрезание (clipping)</div>
+
+    <!-- RGB -->
+    <div class="model">
+        <h2>RGB</h2>
+        <div class="row"><label>R</label>
+            <input type="range" id="r" min="0" max="255" value="255">
+            <input type="number" id="rN" value="255" min="0" max="255">
+            <input type="color" id="rColor" value="#ff0000">
+        </div>
+        <div class="row"><label>G</label>
+            <input type="range" id="g" min="0" max="255" value="0">
+            <input type="number" id="gN" value="0" min="0" max="255">
+        </div>
+        <div class="row"><label>B</label>
+            <input type="range" id="b" min="0" max="255" value="0">
+            <input type="number" id="bN" value="0" min="0" max="255">
+        </div>
+    </div>
+
+    <!-- HSV -->
+    <div class="model">
+        <h2>HSV</h2>
+        <div class="row"><label>H</label>
+            <input type="range" id="h" min="0" max="360" value="0">
+            <input type="number" id="hN" value="0" min="0" max="360">
+            <span class="value" id="hOut">0</span>°
+        </div>
+        <div class="row"><label>S</label>
+            <input type="range" id="s" min="0" max="100" value="100">
+            <input type="number" id="sN" value="100" min="0" max="100">
+            <span class="value" id="sOut">100</span>%
+        </div>
+        <div class="row"><label>V</label>
+            <input type="range" id="v" min="0" max="100" value="100">
+            <input type="number" id="vN" value="100" min="0" max="100">
+            <span class="value" id="vOut">100</span>%
+        </div>
+    </div>
+
+    <!-- CMYK -->
+    <div class="model">
+        <h2>CMYK</h2>
+        <div class="row"><label>C</label>
+            <input type="range" id="c" min="0" max="100" value="0">
+            <input type="number" id="cN" value="0" min="0" max="100">
+            <span class="value" id="cOut">0</span>%
+        </div>
+        <div class="row"><label>M</label>
+            <input type="range" id="m" min="0" max="100" value="100">
+            <input type="number" id="mN" value="100" min="0" max="100">
+            <span class="value" id="mOut">100</span>%
+        </div>
+        <div class="row"><label>Y</label>
+            <input type="range" id="y" min="0" max="100" value="100">
+            <input type="number" id="yN" value="100" min="0" max="100">
+            <span class="value" id="yOut">100</span>%
+        </div>
+        <div class="row"><label>K</label>
+            <input type="range" id="k" min="0" max="100" value="0">
+            <input type="number" id="kN" value="0" min="0" max="100">
+            <span class="value" id="kOut">0</span>%
+        </div>
+    </div>
+
+    <script>
+        // математика 
+        
+        function rgbToHsv(r, g, b) {
+            r /= 255; g /= 255; b /= 255;
+            const max = Math.max(r, g, b), min = Math.min(r, g, b);
+            const d = max - min;
+            let h = 0, s = max ? d / max : 0, v = max;
+            if (d) {
+                if (max === r) h = ((g - b) / d) % 6;
+                else if (max === g) h = (b - r) / d + 2;
+                else h = (r - g) / d + 4;
+                h = Math.round(h * 60);
+                if (h < 0) h += 360;
+            }
+            return { h, s: Math.round(s * 100), v: Math.round(v * 100) };
+        }
+
+        function hsvToRgb(h, s, v) {
+            s /= 100; v /= 100;
+            const c = v * s;
+            const x = c * (1 - Math.abs((h / 60) % 2 - 1));
+            const m = v - c;
+            let r = 0, g = 0, b = 0;
+            
+            if (h < 60)       { r = c; g = x; b = 0; }
+            else if (h < 120) { r = x; g = c; b = 0; }
+            else if (h < 180) { r = 0; g = c; b = x; }
+            else if (h < 240) { r = 0; g = x; b = c; }
+            else if (h < 300) { r = x; g = 0; b = c; }
+            else              { r = c; g = 0; b = x; }
+            
+            return {
+                r: Math.round((r + m) * 255),
+                g: Math.round((g + m) * 255),
+                b: Math.round((b + m) * 255)
+            };
+        }
+
+        function rgbToCmyk(r, g, b) {
+            r /= 255; g /= 255; b /= 255;
+            const k = 1 - Math.max(r, g, b);
+            const div = 1 - k || 1;
+            return {
+                c: Math.round((1 - r - k) / div * 100),
+                m: Math.round((1 - g - k) / div * 100),
+                y: Math.round((1 - b - k) / div * 100),
+                k: Math.round(k * 100)
+            };
+        }
+
+        function cmykToRgb(c, m, y, k) {
+            c /= 100; m /= 100; y /= 100; k /= 100;
+            return {
+                r: Math.round(255 * (1 - c) * (1 - k)),
+                g: Math.round(255 * (1 - m) * (1 - k)),
+                b: Math.round(255 * (1 - y) * (1 - k))
+            };
+        }
+
+        function clamp(value, min, max) {
+            return Math.max(min, Math.min(max, value));
+        }
+
+        //  логика 
+        
+        let isUpdating = false; 
+        const $ = id => document.getElementById(id);
+        const preview = $('preview');
+        const warning = $('warning');
+
+        function showWarning() {
+            warning.classList.add('show');
+            setTimeout(() => warning.classList.remove('show'), 2000);
+        }
+
+        function updateFromRgb() {
+            if (isUpdating) return;
+            isUpdating = true;
+            
+            const r = clamp(+$('r').value, 0, 255);
+            const g = clamp(+$('g').value, 0, 255);
+            const b = clamp(+$('b').value, 0, 255);
+            
+            $('r').value = r; $('rN').value = r;
+            $('g').value = g; $('gN').value = g;
+            $('b').value = b; $('bN').value = b;
+            
+            // Обновляем цветовой picker
+            const hex = '#' + [r, g, b].map(x => x.toString(16).padStart(2, '0')).join('');
+            $('rColor').value = hex;
+            
+            preview.style.background = `rgb(${r},${g},${b})`;
+
+            // Пересчёт в HSV
+            const hsv = rgbToHsv(r, g, b);
+            $('h').value = hsv.h; $('hN').value = hsv.h; $('hOut').textContent = hsv.h;
+            $('s').value = hsv.s; $('sN').value = hsv.s; $('sOut').textContent = hsv.s;
+            $('v').value = hsv.v; $('vN').value = hsv.v; $('vOut').textContent = hsv.v;
+
+            // Пересчёт в CMYK
+            const cmyk = rgbToCmyk(r, g, b);
+            $('c').value = cmyk.c; $('cN').value = cmyk.c; $('cOut').textContent = cmyk.c;
+            $('m').value = cmyk.m; $('mN').value = cmyk.m; $('mOut').textContent = cmyk.m;
+            $('y').value = cmyk.y; $('yN').value = cmyk.y; $('yOut').textContent = cmyk.y;
+            $('k').value = cmyk.k; $('kN').value = cmyk.k; $('kOut').textContent = cmyk.k;
+
+            isUpdating = false;
+        }
+
+        function updateFromHsv() {
+            if (isUpdating) return;
+            isUpdating = true;
+            
+            const h = clamp(+$('h').value, 0, 360);
+            const s = clamp(+$('s').value, 0, 100);
+            const v = clamp(+$('v').value, 0, 100);
+            
+            $('h').value = h; $('hN').value = h; $('hOut').textContent = h;
+            $('s').value = s; $('sN').value = s; $('sOut').textContent = s;
+            $('v').value = v; $('vN').value = v; $('vOut').textContent = v;
+
+            const rgb = hsvToRgb(h, s, v);
+            $('r').value = rgb.r; $('rN').value = rgb.r;
+            $('g').value = rgb.g; $('gN').value = rgb.g;
+            $('b').value = rgb.b; $('bN').value = rgb.b;
+            
+            const hex = '#' + [rgb.r, rgb.g, rgb.b].map(x => x.toString(16).padStart(2, '0')).join('');
+            $('rColor').value = hex;
+            preview.style.background = `rgb(${rgb.r},${rgb.g},${rgb.b})`;
+
+            const cmyk = rgbToCmyk(rgb.r, rgb.g, rgb.b);
+            $('c').value = cmyk.c; $('cN').value = cmyk.c; $('cOut').textContent = cmyk.c;
+            $('m').value = cmyk.m; $('mN').value = cmyk.m; $('mOut').textContent = cmyk.m;
+            $('y').value = cmyk.y; $('yN').value = cmyk.y; $('yOut').textContent = cmyk.y;
+            $('k').value = cmyk.k; $('kN').value = cmyk.k; $('kOut').textContent = cmyk.k;
+
+            isUpdating = false;
+        }
+
+        function updateFromCmyk() {
+            if (isUpdating) return;
+            isUpdating = true;
+            
+            const c = clamp(+$('c').value, 0, 100);
+            const m = clamp(+$('m').value, 0, 100);
+            const y = clamp(+$('y').value, 0, 100);
+            const k = clamp(+$('k').value, 0, 100);
+            
+            $('c').value = c; $('cN').value = c; $('cOut').textContent = c;
+            $('m').value = m; $('mN').value = m; $('mOut').textContent = m;
+            $('y').value = y; $('yN').value = y; $('yOut').textContent = y;
+            $('k').value = k; $('kN').value = k; $('kOut').textContent = k;
+
+            const rgb = cmykToRgb(c, m, y, k);
+            
+            // Проверка выхода за границы (clipping)
+            let clipped = false;
+            const r = clamp(rgb.r, 0, 255);
+            const g = clamp(rgb.g, 0, 255);
+            const b = clamp(rgb.b, 0, 255);
+            if (rgb.r !== r || rgb.g !== g || rgb.b !== b) {
+                clipped = true;
+            }
+            
+            $('r').value = r; $('rN').value = r;
+            $('g').value = g; $('gN').value = g;
+            $('b').value = b; $('bN').value = b;
+            
+            const hex = '#' + [r, g, b].map(x => x.toString(16).padStart(2, '0')).join('');
+            $('rColor').value = hex;
+            preview.style.background = `rgb(${r},${g},${b})`;
+
+            if (clipped) showWarning();
+
+            const hsv = rgbToHsv(r, g, b);
+            $('h').value = hsv.h; $('hN').value = hsv.h; $('hOut').textContent = hsv.h;
+            $('s').value = hsv.s; $('sN').value = hsv.s; $('sOut').textContent = hsv.s;
+            $('v').value = hsv.v; $('vN').value = hsv.v; $('vOut').textContent = hsv.v;
+
+            isUpdating = false;
+        }
+
+        
+        
+        // RGB события
+        ['r', 'g', 'b'].forEach(id => {
+            $(id).addEventListener('input', updateFromRgb);
+            $(id + 'N').addEventListener('input', e => {
+                $(id).value = e.target.value;
+                updateFromRgb();
+            });
+        });
+        $('rColor').addEventListener('input', e => {
+            const hex = e.target.value;
+            const r = parseInt(hex.substr(1, 2), 16);
+            const g = parseInt(hex.substr(3, 2), 16);
+            const b = parseInt(hex.substr(5, 2), 16);
+            $('r').value = r; $('g').value = g; $('b').value = b;
+            updateFromRgb();
+        });
+
+        // HSV события
+        ['h', 's', 'v'].forEach(id => {
+            $(id).addEventListener('input', updateFromHsv);
+            $(id + 'N').addEventListener('input', e => {
+                $(id).value = e.target.value;
+                updateFromHsv();
+            });
+        });
+
+        // CMYK события
+        ['c', 'm', 'y', 'k'].forEach(id => {
+            $(id).addEventListener('input', updateFromCmyk);
+            $(id + 'N').addEventListener('input', e => {
+                $(id).value = e.target.value;
+                updateFromCmyk();
+            });
+        });
+
+        // Инициализация
+        updateFromRgb();
+    </script>
+</body>
+</html>
