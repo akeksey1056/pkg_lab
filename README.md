@@ -1,2 +1,2 @@
 # pkg_lab
-laba1 https://jazzy-gingersnap-8717ee.netlify.app/
+laba1 https://deluxe-sawine-4bf5fd.netlify.app/
