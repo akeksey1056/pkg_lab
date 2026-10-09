@@ -1,0 +1,408 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <title>Лаб 2 — Анализ изображений</title>
+    <style>
+        body { font-family: Arial, sans-serif; max-width: 1400px; margin: 20px auto; padding: 0 20px; background: #f5f5f5; }
+        h1 { color: #333; text-align: center; }
+        .panel { background: white; padding: 20px; border-radius: 8px; margin-bottom: 20px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); }
+        button { padding: 10px 20px; background: #4a90d9; color: white; border: none; border-radius: 5px; cursor: pointer; font-size: 14px; }
+        button:hover { background: #357abd; }
+        button:disabled { background: #aaa; cursor: not-allowed; }
+        input[type="file"] { display: none; }
+        .info { color: #666; margin-left: 15px; }
+        table { width: 100%; border-collapse: collapse; background: white; }
+        th, td { padding: 8px 10px; border: 1px solid #ddd; font-size: 13px; text-align: left; }
+        th { background: #333; color: white; position: sticky; top: 0; }
+        tr:nth-child(even) { background: #f9f9f9; }
+        tr:hover { background: #e8f0fe; }
+        .badge { padding: 2px 8px; border-radius: 10px; color: white; font-size: 11px; font-weight: bold; }
+        .jpg { background: #e74c3c; } .png { background: #27ae60; } .gif { background: #f39c12; }
+        .bmp { background: #3498db; } .tif { background: #9b59b6; } .pcx { background: #1abc9c; }
+        .extra { font-size: 11px; color: #666; max-width: 250px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .stats { display: flex; gap: 30px; margin-bottom: 15px; }
+        .stat { font-size: 14px; } .stat b { font-size: 18px; color: #333; }
+        .progress { width: 100%; height: 6px; background: #ddd; border-radius: 3px; margin: 10px 0; display: none; }
+        .progress-fill { height: 100%; background: #4a90d9; border-radius: 3px; width: 0%; transition: width 0.2s; }
+        .pages { text-align: center; margin: 15px 0; }
+        .pages button { margin: 0 3px; padding: 6px 12px; font-size: 13px; }
+        .pages button.active { background: #2c3e50; }
+    </style>
+</head>
+<body>
+
+<h1>️ Анализ графических файлов</h1>
+
+<div class="panel">
+    <button onclick="document.getElementById('folderInput').click()"> Выбрать папку</button>
+    <input type="file" id="folderInput" webkitdirectory directory multiple>
+    <span class="info" id="folderInfo">Папка не выбрана</span>
+    <div class="progress" id="progress"><div class="progress-fill" id="progressFill"></div></div>
+</div>
+
+<div class="stats" id="stats" style="display:none;">
+    <div class="stat">Всего файлов: <b id="statTotal">0</b></div>
+    <div class="stat">Обработано: <b id="statDone">0</b></div>
+    <div class="stat">Время: <b id="statTime">—</b></div>
+</div>
+
+<div class="panel" style="overflow-x:auto;">
+    <table id="table">
+        <thead><tr>
+            <th>Имя файла</th><th>Формат</th><th>Размер (px)</th>
+            <th>Разрешение (dpi)</th><th>Глубина цвета</th>
+            <th>Сжатие</th><th>Размер файла</th><th>Доп. информация</th>
+        </tr></thead>
+        <tbody id="tbody"><tr><td colspan="8" style="text-align:center;padding:30px;color:#888;">Выберите папку с изображениями</td></tr></tbody>
+    </table>
+</div>
+
+<div class="pages" id="pages"></div>
+
+<script>
+// ============================================================
+//  НАСТРОЙКИ
+// ============================================================
+const SUPPORTED = ['.jpg','.jpeg','.gif','.tif','.tiff','.bmp','.png','.pcx'];
+const PAGE_SIZE = 100;
+
+let allResults = [];   // результаты парсинга
+let currentPage = 1;
+
+// ============================================================
+//  ВЫБОР ПАПКИ
+// ============================================================
+document.getElementById('folderInput').addEventListener('change', async function(e) {
+    const files = Array.from(e.target.files)
+        .filter(f => SUPPORTED.includes('.' + f.name.split('.').pop().toLowerCase()));
+
+    if (files.length === 0) {
+        document.getElementById('folderInfo').textContent = 'Файлы не найдены';
+        return;
+    }
+
+    document.getElementById('folderInfo').textContent = `Найдено файлов: ${files.length}`;
+    document.getElementById('stats').style.display = 'flex';
+    document.getElementById('progress').style.display = 'block';
+    document.getElementById('statTotal').textContent = files.length;
+    document.getElementById('statDone').textContent = '0';
+
+    const startTime = performance.now();
+    allResults = [];
+
+    // Обрабатываем файлы по одному (просто и понятно)
+    for (let i = 0; i < files.length; i++) {
+        const result = await parseFile(files[i]);
+        if (result) allResults.push(result);
+
+        // Обновляем прогресс
+        const pct = Math.round(((i + 1) / files.length) * 100);
+        document.getElementById('progressFill').style.width = pct + '%';
+        document.getElementById('statDone').textContent = allResults.length;
+
+        // Даём браузеру обновить интерфейс каждые 50 файлов
+        if (i % 50 === 0) await sleep(0);
+    }
+
+    const elapsed = ((performance.now() - startTime) / 1000).toFixed(2);
+    document.getElementById('statTime').textContent = elapsed + ' сек';
+
+    currentPage = 1;
+    renderPage();
+
+    setTimeout(() => { document.getElementById('progress').style.display = 'none'; }, 1000);
+});
+
+function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+// ============================================================
+//  УТИЛИТА: читать байты из файла
+// ============================================================
+async function readBytes(file, offset, length) {
+    const buf = await file.slice(offset, offset + length).arrayBuffer();
+    return new Uint8Array(buf);
+}
+
+// ============================================================
+//  ПАРСЕР JPEG
+// ============================================================
+async function parseJPEG(file) {
+    const data = await readBytes(file, 0, 65536); // читаем первые 64 КБ
+    const info = { width:0, height:0, dpi_x:0, dpi_y:0, bit_depth:24, compression:'JPEG', extra:'' };
+
+    let pos = 0;
+    while (pos < data.length - 1) {
+        if (data[pos] !== 0xFF) { pos++; continue; }
+        const marker = data[pos + 1];
+
+        // SOF0 — основной маркер с размерами
+        if (marker >= 0xC0 && marker <= 0xCF && marker !== 0xC4 && marker !== 0xC8) {
+            const len = (data[pos+2] << 8) | data[pos+3];
+            info.bit_depth = data[pos+4];
+            info.height = (data[pos+5] << 8) | data[pos+6];
+            info.width = (data[pos+7] << 8) | data[pos+8];
+            const comps = data[pos+9];
+            info.bit_depth = info.bit_depth * comps;
+            pos += 2 + len;
+            continue;
+        }
+
+        // APP0 (JFIF) — DPI
+        if (marker === 0xE0) {
+            const len = (data[pos+2] << 8) | data[pos+3];
+            if (len >= 14) {
+                const units = data[pos+7];
+                const x = (data[pos+8] << 8) | data[pos+9];
+                const y = (data[pos+10] << 8) | data[pos+11];
+                if (units === 1) { info.dpi_x = x; info.dpi_y = y; }
+                else if (units === 2) { info.dpi_x = Math.round(x*2.54); info.dpi_y = Math.round(y*2.54); }
+            }
+            pos += 2 + len;
+            continue;
+        }
+
+        // DQT — матрица квантования (доп. баллы)
+        if (marker === 0xDB) {
+            const len = (data[pos+2] << 8) | data[pos+3];
+            const prec = (data[pos+4] >> 4) & 0x0F;
+            const vals = [];
+            for (let i = 0; i < 64; i++) {
+                if (prec === 0) vals.push(data[pos+5+i]);
+                else vals.push((data[pos+5+i*2] << 8) | data[pos+5+i*2+1]);
+            }
+            info.extra = `Матрица квантования (первые 8): [${vals.slice(0,8).join(', ')}]`;
+            pos += 2 + len;
+            continue;
+        }
+
+        // Пропускаем другие маркеры
+        if (pos + 3 < data.length) {
+            const len = (data[pos+2] << 8) | data[pos+3];
+            pos += 2 + len;
+        } else break;
+    }
+    return info;
+}
+
+// ============================================================
+//  ПАРСЕР PNG
+// ============================================================
+async function parsePNG(file) {
+    const data = await readBytes(file, 0, 1024);
+    const info = { width:0, height:0, dpi_x:0, dpi_y:0, bit_depth:0, compression:'Deflate (zlib)', extra:'' };
+
+    // IHDR чанк: смещение 16
+    info.width = (data[16]<<24)|(data[17]<<16)|(data[18]<<8)|data[19];
+    info.height = (data[20]<<24)|(data[21]<<16)|(data[22]<<8)|data[23];
+    info.bit_depth = data[24];
+
+    const colorNames = {0:'Grayscale',2:'RGB',3:'Indexed',4:'Gray+Alpha',6:'RGBA'};
+    info.extra = `Режим: ${colorNames[data[25]] || data[25]}`;
+
+    // Ищем pHYs чанк (DPI)
+    let pos = 8;
+    while (pos < data.length - 8) {
+        const len = (data[pos]<<24)|(data[pos+1]<<16)|(data[pos+2]<<8)|data[pos+3];
+        const type = String.fromCharCode(data[pos+4],data[pos+5],data[pos+6],data[pos+7]);
+        if (type === 'pHYs' && len >= 9) {
+            const x = (data[pos+8]<<24)|(data[pos+9]<<16)|(data[pos+10]<<8)|data[pos+11];
+            const y = (data[pos+12]<<24)|(data[pos+13]<<16)|(data[pos+14]<<8)|data[pos+15];
+            if (data[pos+16] === 1) { // метры
+                info.dpi_x = Math.round(x / 39.3701);
+                info.dpi_y = Math.round(y / 39.3701);
+            }
+            break;
+        }
+        pos += 12 + len;
+    }
+    return info;
+}
+
+// ============================================================
+//  ПАРСЕР GIF
+// ============================================================
+async function parseGIF(file) {
+    const data = await readBytes(file, 0, 32);
+    const info = { width:0, height:0, dpi_x:0, dpi_y:0, bit_depth:8, compression:'LZW', extra:'' };
+
+    info.width = data[6] | (data[7]<<8);
+    info.height = data[8] | (data[9]<<8);
+
+    const packed = data[10];
+    const colorRes = ((packed >> 4) & 0x07) + 1;
+    info.bit_depth = colorRes;
+
+    if ((packed >> 7) & 1) {
+        const colors = 2 ** ((packed & 0x07) + 1);
+        info.extra = `Цветов в палитре: ${colors}`;
+    }
+    return info;
+}
+
+// ============================================================
+//  ПАРСЕР BMP
+// ============================================================
+async function parseBMP(file) {
+    const data = await readBytes(file, 0, 64);
+    const info = { width:0, height:0, dpi_x:0, dpi_y:0, bit_depth:0, compression:'None', extra:'' };
+
+    info.width = data[18]|(data[19]<<8)|(data[20]<<16)|(data[21]<<24);
+    info.height = data[22]|(data[23]<<8)|(data[24]<<16)|(data[25]<<24);
+    info.bit_depth = data[28]|(data[29]<<8);
+
+    const comp = data[30]|(data[31]<<8)|(data[32]<<16)|(data[33]<<24);
+    const names = {0:'None',1:'RLE-8',2:'RLE-4',3:'Bitfields'};
+    info.compression = names[comp] || `Unknown(${comp})`;
+
+    // DPI (пикселей на метр → dpi)
+    const ppmX = data[38]|(data[39]<<8)|(data[40]<<16)|(data[41]<<24);
+    const ppmY = data[42]|(data[43]<<8)|(data[44]<<16)|(data[45]<<24);
+    if (ppmX > 0) { info.dpi_x = Math.round(ppmX * 0.0254); info.dpi_y = Math.round(ppmY * 0.0254); }
+
+    return info;
+}
+
+// ============================================================
+//  ПАРСЕР TIFF
+// ============================================================
+async function parseTIFF(file) {
+    const data = await readBytes(file, 0, 4096);
+    const info = { width:0, height:0, dpi_x:0, dpi_y:0, bit_depth:0, compression:'None', extra:'' };
+
+    const little = (data[0]<<8)|data[1] === 0x4949; // 'II' = little endian
+    const r16 = o => little ? (data[o]|(data[o+1]<<8)) : ((data[o]<<8)|data[o+1]);
+    const r32 = o => little ? (data[o]|(data[o+1]<<8)|(data[o+2]<<16)|(data[o+3]<<24))
+                            : ((data[o]<<24)|(data[o+1]<<16)|(data[o+2]<<8)|data[o+3]);
+
+    const ifdOff = r32(4);
+    const n = r16(ifdOff);
+    const compNames = {1:'None',5:'LZW',6:'JPEG',8:'Deflate',32773:'PackBits'};
+
+    for (let i = 0; i < n; i++) {
+        const off = ifdOff + 2 + i*12;
+        const tag = r16(off);
+        const type = r16(off+2);
+        const val = type === 3 ? r16(off+8) : r32(off+8);
+
+        if (tag === 256) info.width = val;
+        else if (tag === 257) info.height = val;
+        else if (tag === 258) info.bit_depth = val;
+        else if (tag === 259) info.compression = compNames[val] || `Comp(${val})`;
+        else if (tag === 282 && type === 5) { // XResolution
+            const no = r32(off+8); info.dpi_x = Math.round(r32(no)/r32(no+4));
+        }
+        else if (tag === 283 && type === 5) { // YResolution
+            const no = r32(off+8); info.dpi_y = Math.round(r32(no)/r32(no+4));
+        }
+    }
+    return info;
+}
+
+// ============================================================
+//  ПАРСЕР PCX
+// ============================================================
+async function parsePCX(file) {
+    const data = await readBytes(file, 0, 128);
+    const info = { width:0, height:0, dpi_x:0, dpi_y:0, bit_depth:0, compression:'RLE', extra:'' };
+
+    info.bit_depth = data[3];
+    const xmin = data[4]|(data[5]<<8), xmax = data[8]|(data[9]<<8);
+    const ymin = data[6]|(data[7]<<8), ymax = data[10]|(data[11]<<8);
+    info.width = xmax - xmin + 1;
+    info.height = ymax - ymin + 1;
+    info.dpi_x = data[12]|(data[13]<<8);
+    info.dpi_y = data[14]|(data[15]<<8);
+
+    const planes = data[65];
+    const totalBits = info.bit_depth * planes;
+    const colors = totalBits===1?2 : totalBits===4?16 : totalBits===8?256 : totalBits===24?16777216 : 0;
+    info.extra = `Плоскостей: ${planes}, цветов: ${colors}`;
+
+    return info;
+}
+
+// ============================================================
+//  ГЛАВНАЯ ФУНКЦИЯ ПАРСИНГА
+// ============================================================
+async function parseFile(file) {
+    const ext = '.' + file.name.split('.').pop().toLowerCase();
+    const result = {
+        name: file.name,
+        format: ext.slice(1).toUpperCase(),
+        fileSize: file.size,
+        width: 0, height: 0, dpi_x: 0, dpi_y: 0,
+        bit_depth: 0, compression: 'N/A', extra: ''
+    };
+
+    try {
+        let info;
+        if (ext==='.jpg'||ext==='.jpeg') info = await parseJPEG(file);
+        else if (ext==='.png') info = await parsePNG(file);
+        else if (ext==='.gif') info = await parseGIF(file);
+        else if (ext==='.bmp') info = await parseBMP(file);
+        else if (ext==='.tif'||ext==='.tiff') info = await parseTIFF(file);
+        else if (ext==='.pcx') info = await parsePCX(file);
+        else return null;
+
+        Object.assign(result, info);
+    } catch(e) {
+        result.extra = 'Ошибка: ' + e.message;
+    }
+    return result;
+}
+
+// ============================================================
+//  ОТОБРАЖЕНИЕ ТАБЛИЦЫ
+// ============================================================
+function formatBytes(b) {
+    if (!b) return '0 Б';
+    const k = 1024, sizes = ['Б','КБ','МБ','ГБ'];
+    const i = Math.floor(Math.log(b)/Math.log(k));
+    return (b/Math.pow(k,i)).toFixed(1) + ' ' + sizes[i];
+}
+
+function renderPage() {
+    const total = allResults.length;
+    const totalPages = Math.ceil(total / PAGE_SIZE) || 1;
+    if (currentPage > totalPages) currentPage = totalPages;
+
+    const start = (currentPage - 1) * PAGE_SIZE;
+    const page = allResults.slice(start, start + PAGE_SIZE);
+
+    let html = '';
+    page.forEach(r => {
+        const fmtClass = r.format.toLowerCase().replace('jpeg','jpg');
+        html += `<tr>
+            <td title="${r.name}">${r.name.length>40 ? r.name.substring(0,37)+'...' : r.name}</td>
+            <td><span class="badge ${fmtClass}">${r.format}</span></td>
+            <td>${r.width} × ${r.height}</td>
+            <td>${r.dpi_x} × ${r.dpi_y}</td>
+            <td>${r.bit_depth} бит</td>
+            <td>${r.compression}</td>
+            <td>${formatBytes(r.fileSize)}</td>
+            <td class="extra" title="${(r.extra||'').replace(/"/g,'&quot;')}">${r.extra||'—'}</td>
+        </tr>`;
+    });
+
+    document.getElementById('tbody').innerHTML = html || '<tr><td colspan="8" style="text-align:center;padding:20px;">Нет данных</td></tr>';
+
+    // Пагинация
+    let pagesHtml = '';
+    if (totalPages > 1) {
+        pagesHtml += `<button ${currentPage===1?'disabled':''} onclick="goPage(1)">⏮</button> `;
+        pagesHtml += `<button ${currentPage===1?'disabled':''} onclick="goPage(${currentPage-1})">◀</button> `;
+        for (let i = Math.max(1,currentPage-2); i <= Math.min(totalPages,currentPage+2); i++) {
+            pagesHtml += `<button class="${i===currentPage?'active':''}" onclick="goPage(${i})">${i}</button> `;
+        }
+        pagesHtml += `<button ${currentPage===totalPages?'disabled':''} onclick="goPage(${currentPage+1})">▶</button> `;
+        pagesHtml += `<button ${currentPage===totalPages?'disabled':''} onclick="goPage(${totalPages})"></button>`;
+    }
+    document.getElementById('pages').innerHTML = pagesHtml;
+}
+
+function goPage(p) { currentPage = p; renderPage(); window.scrollTo({top:300, behavior:'smooth'}); }
+</script>
+
+</body>
+</html>
